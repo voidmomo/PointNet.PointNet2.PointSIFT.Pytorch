@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project version="4">
+  <component name="ProjectModuleManager">
+    <modules>
+      <module fileurl="file://$PROJECT_DIR$/.idea/PointNet.iml" filepath="$PROJECT_DIR$/.idea/PointNet.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../Test/.idea/Test.iml" filepath="$PROJECT_DIR$/../Test/.idea/Test.iml" />
+      <module fileurl="file://$USER_HOME$/Workspace/Github/Face++/ResearchDet-master-fb8c4edd292ed19052e55e02190d5aaa4b8416ca/model/guozihao/.idea/guozihao.iml" filepath="$USER_HOME$/Workspace/Github/Face++/ResearchDet-master-fb8c4edd292ed19052e55e02190d5aaa4b8416ca/model/guozihao/.idea/guozihao.iml" />
+    </modules>
+  </component>
+</project>
