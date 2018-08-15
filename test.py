@@ -3,47 +3,138 @@
 import numpy as np
 import torch
 
-# a = np.random.rand(3, 2, 2, 3)
-# b = np.random.rand(3, 3, 2, 3)
-#
-# # out = np.concatenate([a, b], axis=0)
-# # print(out.shape)
-# #
-# # out_t = torch.from_numpy(out)
-# # print(out_t)
-#
-# a = torch.tensor([[1, 3, 2], [3, 4, 5], [5, 6, 7]])
-# b = torch.tensor([3, 1, 2])
-# import torch.nn.functional as F
-#
-# import torch.nn as nn
-#
-# #
-# # nn.NLLLoss
-# # F.nll_loss()
-#
-# net = nn.Sequential(
-#     nn.Linear(10, 2)
-# )
-#
-# inp = torch.rand(10)
-# outp = net(inp)
-# # print(outp.size())
-# #
-# # print(net.state_dict())
-# import torch.optim as optim
-#
-# opt = optim.SGD(net.parameters(), lr=1e-3)
-# for param in opt.param_groups:
-#     print(type(param['lr']))
-# # print(tuple(inp.size()[0]) + tuple([-1,]))
-# a = max(2.3, 3.4)
-# print(a)
-a = np.ones([3, 2, 3])
-print(a)
-print(a[1, ...])
-b = a[1, ...]
-c = np.array([[2, 2, 2], [3, 3, 3], [5, 5, 5]])
-d = np.dot(b, c)
-print(d)
 
+def square_distance(src, dst):
+    """
+    Input:
+        src: source points, [B, N, C]
+        dst: target points, [B, M, C]
+    Output:
+        dist: per-point square distance, [B, N, M]
+    """
+    B, N, _ = src.shape
+    _, M, _ = dst.shape
+    dist = -2 * torch.matmul(src, dst.permute(0, 2, 1))
+    dist += torch.sum(src ** 2, -1).view(B, N, 1)
+    dist += torch.sum(dst ** 2, -1).view(B, 1, M)
+    return dist
+
+
+def farthest_point_sample(xyz, npoint):
+    """
+    Input:
+        xyz: pointcloud data, [B, N, C]
+        npoint: number of samples
+    Return:
+        centroids: sampled pointcloud data, [B, npoint, C]
+    """
+    device = xyz.device
+    B, N, C = xyz.shape
+    S = npoint
+    centroids = torch.zeros(B, S, dtype=torch.long).to(device)
+    distance = torch.ones(B, N).to(device) * 1e10
+    farthest = torch.randint(0, N, (B,), dtype=torch.long).to(device)
+    batch_indices = torch.arange(B, dtype=torch.long).to(device)
+
+    for i in range(S):
+        centroids[:, i] = farthest
+        centroid = xyz[batch_indices, farthest, :].view(B, 1, C)
+        dist = torch.sum((xyz - centroid)**2, -1)
+        mask = dist < distance
+        distance[mask] = dist[mask]
+        farthest = torch.max(distance, -1)[1]
+
+    return centroids
+
+def index_points(points, idx):
+    """
+    Input:
+        points: input points data, [B, N, C]
+        idx: sample index data, [B, D1, D2, ..., Dn]
+    Return:
+        new_points:, indexed points data, [B, D1, D2, ..., Dn, C]
+    """
+    device = points.device
+    B = points.shape[0]
+    view_shape = list(idx.shape)
+    view_shape[1:] = [1] * (len(view_shape) - 1)
+    repeat_shape = list(idx.shape)
+    repeat_shape[0] = 1
+    batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
+    new_points = points[batch_indices, idx, :]
+    return new_points
+
+def ball_query(radius, nsample, xyz, new_xyz):
+    """
+    Input:
+        radius: local region radius
+        nsample: max sample number in local region
+        xyz: all points, [B, N, C]
+        new_xyz: query points, [B, S, C]
+    Return:
+        group_idx: grouped points index, [B, S, nsample]
+    """
+    device = xyz.device
+    B, N, C = xyz.shape
+    _, S, _ = new_xyz.shape
+    K = nsample
+    group_idx = torch.arange(N, dtype=torch.long).to(device).view(1, 1, N).repeat([B, S, 1])
+    sqrdists = square_distance(new_xyz, xyz)
+    group_idx[sqrdists > radius ** 2] = N
+    group_idx = group_idx.sort(dim=-1)[0][:, :, :K]
+    group_first = group_idx[:, :, 0].view(B, S, 1).repeat([1, 1, K])
+    mask = group_idx == N
+    group_idx[mask] = group_first[mask]
+    return group_idx
+
+# xyz = torch.rand(3, 4, 6)
+# npoint = 2
+#
+# print(xyz)
+# res = farthest_point_sample(xyz, npoint)
+# print(res)
+import torch.nn as nn
+import torch.nn.functional as F
+
+# a = torch.rand(3, 4)
+# print(a)
+# print(torch.log(F.softmax(a, 1)))
+# print(F.log_softmax(a, 1))
+
+# F.nll_loss()
+input = torch.randn(3, 5, requires_grad=True)
+# each element in target has to have 0 <= value < C
+target = torch.tensor([1, 0, 4])
+output = F.nll_loss(F.log_softmax(input, dim=1), target)
+output2 = F.cross_entropy(input, target)
+print(output.detach())
+print(output2.detach())
+
+# print(res)
+# res = ball_query(0.2,1, xyz, res)
+# print(res.shape,res)
+# res = index_points(xyz, res)
+# print(res.shape, res)
+#
+
+import torch.nn as nn
+
+# net = nn.Sequential()
+# net.append(nn.Linear(25, 24))
+# x = torch.rand(25)
+# y = net(x)
+# print(y.shape)
+
+# model = nn.Sequential(
+#     nn.Conv2d(1, 20, 5),
+#     nn.ReLU(),
+#     nn.Conv2d(20, 64, 5),
+#     nn.ReLU()
+# )
+# for idx, module in enumerate(model.modules()):
+#     print(idx)
+
+# a = torch.rand(32, 512)
+# b = [a, a, a]
+# c = torch.cat(b, dim=1)
+# print(c.shape)

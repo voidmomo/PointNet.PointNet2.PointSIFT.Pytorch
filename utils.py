@@ -4,6 +4,7 @@
 import torch
 import numpy as np
 from torch.autograd import Function
+import os
 
 
 # --------------------- Transforms --------------------- #
@@ -114,21 +115,17 @@ class JitterPointCloud(object):
 
 # --------------------- Functions --------------------- #
 
-class FurthestPointSampling(Function):
-    @staticmethod
-    def forward(ctx, *args, **kwargs):
-        pass
+def check_filepath(fp, clean=False):
+    if not os.path.exists(fp):
+        os.makedirs(fp)
+    elif clean:
+        ls = os.listdir(fp)
+        for l in ls:
+            f = os.path.join(fp, l)
+            if os.path.isdir(f):
+                os.removedirs()
+                check_filepath(l, clean=True)
+            else:
+                os.remove(f)
 
-    @staticmethod
-    def backward(ctx, *grad_outputs):
-        pass
 
-
-class BallQuery(Function):
-    @staticmethod
-    def forward(ctx, *args, **kwargs):
-        pass
-
-    @staticmethod
-    def backward(ctx, *grad_outputs):
-        pass

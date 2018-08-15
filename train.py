@@ -63,6 +63,9 @@ def start(args):
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
 
     for epoch in range(args.max_epoch + 1):
+
+        total_train_loss = 0.
+        total_correct = 0
         for i, data in enumerate(dataloader):
             point_cloud, label = data
             if args.cuda:
@@ -74,11 +77,15 @@ def start(args):
             optimizer.step()
             lr_exponential_decay(optimizer, epoch * (config.totality / config.batch_size) + i, config.decay_rate,
                                  config.decay_step)
+            result = pred.max(1)[1]
+            correct = result.eq(label).cpu().sum()
+            total_correct += correct
+            total_train_loss += train_loss.item()
             if i % 16 == 0:
-                result = pred.max(1)[1]
-                correct = result.eq(label).cpu().sum()
                 print('[%d: %d/%d] lr: %f train loss: %f accuracy: %f ' % (
                     epoch, i * config.batch_size, config.totality, optimizer.param_groups[0]['lr'], train_loss.item(),
                     correct.item() / float(config.batch_size)))
+        print('[- %d -] train loss: %f accuracy: %f ' % (
+            epoch, train_loss.item()/len(dataloader), total_correct.item() / config.totality))
         if epoch % 10 == 0:
             torch.save(model.state_dict(), '%s/cls_model_%d.pth' % (args.save_path, epoch))
