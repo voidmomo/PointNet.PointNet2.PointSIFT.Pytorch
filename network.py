@@ -57,7 +57,6 @@ class Input_transform_net(nn.Module):
     def __init__(self, config, K=3):
         super(Input_transform_net, self).__init__()
         self.num_point = config.num_point
-
         self.transform_xyz_weights = nn.Parameter(torch.zeros(256, 3 * K))
         self.transform_xyz_bias = nn.Parameter(torch.zeros(3 * K) + torch.FloatTensor(np.eye(3).flatten()))
 
@@ -366,9 +365,9 @@ class Pointnet_SA_MSG_module(PointNet_SA_module_basic):
         return new_xyz, new_points
 
 
-class PointSIFT_module(nn.Module):
-    def __init__(self):
-        pass
+class PointSIFT_res_module(nn.Module):
+    def __init__(self, radius, output_channel, merge):
+        super(PointSIFT_res_module, self).__init__()
 
     def forward(self, x):
         pass
@@ -387,13 +386,12 @@ class PointNet(nn.Module):
         from config.config_pointnet import config
         self.num_point = config.num_point
         self.num_classes = config.num_classes
-
-        self.K = 64
+        self.K = config.K
 
         self.input_transform_net = Input_transform_net(config)
         self.feat_transform_net = Feature_transform_net(config, self.K)
         self.conv1 = conv_bn(1, 64, [1, 3])
-        self.conv2 = conv_bn(64, 64, [1, 1])
+        self.conv2 = conv_bn(64, self.K, [1, 1])
         self.conv3 = conv_bn(self.K, 64, [1, 1])
         self.conv4 = conv_bn(64, 128, [1, 1])
         self.conv5 = conv_bn(128, 1024, [1, 1])
@@ -401,7 +399,7 @@ class PointNet(nn.Module):
         self.fc2 = fc_bn(512, 256)
         self.fc3 = nn.Linear(256, self.num_classes)
 
-        self.I = nn.Parameter(torch.tensor(np.eye(self.K), dtype=torch.float), requires_grad=False)
+        # self.I = nn.Parameter(torch.tensor(np.eye(config.K), dtype=torch.float,requires_grad=False), requires_grad = False)
 
         self.initialize_weights()
 
@@ -438,7 +436,8 @@ class PointNet(nn.Module):
 
         return x
 
-    def get_loss(self, input, target, reg_weight=0.001):
+    @staticmethod
+    def get_loss(input, target):
 
         """
             input: B*NUM_CLANpNpENp,
@@ -453,9 +452,11 @@ class PointNet(nn.Module):
         from config.config_pointnet import config
         transform = config.end_point['transform']  # BxKxK
         mat_diff = torch.matmul(transform, transform.transpose(2, 1).contiguous())
-        mat_diff.sub_(self.I)
+        I = torch.tensor(np.eye(config.K), dtype=torch.float, requires_grad=False)
+        mat_diff.sub_(I)
         mat_diff_loss = torch.sum(mat_diff ** 2) / 2
 
+        reg_weight = 0.001
         return loss + mat_diff_loss * reg_weight
 
     def initialize_weights(self):
@@ -526,7 +527,8 @@ class PointNet_plus(nn.Module):
     #     x = x[..., 0:3].contiguous()
     #     return x, features
 
-    def get_loss(self, input, target):
+    @staticmethod
+    def get_loss(input, target):
         classify_loss = nn.CrossEntropyLoss()
         loss = classify_loss(input, target)
         return loss
@@ -551,20 +553,82 @@ class PointSIFT(nn.Module):
     def __init__(self):
         super(PointSIFT, self).__init__()
 
-    def forward(self, *input):
+        from config.config_pointsift import config
+        self.num_point = config.num_point
+        self.num_classes = config.num_classes
+
+        self.pointsift_res_m1 = PointSIFT_res_module()
+        self.pointnet_sa_m1 = Pointnet_SA_module()
+
+        self.pointsift_res_m2 = PointSIFT_res_module()
+        self.pointnet_sa_m2 = Pointnet_SA_module()
+
+        self.pointsift_res_m3_1 = PointSIFT_res_module()
+        self.pointsift_res_m3_2 = PointSIFT_res_module()
+
+        self.pointnet_sa_m3 = Pointnet_SA_module()
+
+        # fully conntected network
+        self.fc1 = fc_bn(1024, 512)
+        self.dp1 = nn.Dropout(0.4)
+        self.fc2 = fc_bn(512, 256)
+        self.dp2 = nn.Dropout(0.4)
+        self.fc3 = nn.Linear(256, self.num_classes)
+
+    def forward(self, xyz):
+        """
+        Input:
+            xyz: is the raw point cloud(B * N * 3)
+        Return:
+        """
+        B = xyz.size()[0]
+        # print('xyz:', xyz.shape)
+        # ---- c0 ---- #
+        l1_xyz, l1_points = self.pointnet_sa_m1(xyz, None)
+        # print('l1_xyz:{}, l1_points:{}'.format(l1_xyz.shape, l1_points.shape))
+        l2_xyz, l2_points = self.pointnet_sa_msg_m2(l1_xyz, l1_points)
+        # print('l2_xyz:{}, l2_points:{}'.format(l2_xyz.shape, l2_points.shape))
+        l3_xyz, l3_points = self.pointnet_sa_m3(l2_xyz, l2_points)
+        # print('l3_xyz:{}, l3_points:{}'.format(l3_xyz.shape, l3_points.shape))
+        x = l3_points.view(B, 1024)
+        x = self.fc1(x)
+        x = self.dp1(x)
+        x = self.fc2(x)
+        x = self.dp2(x)
+        x = self.fc3(x)
+        return x
+
+    def get_loss(self):
+        pass
+
+    def init_weights(self):
+        pass
+
+
+class PointSIFT_Seg(nn.Module):
+    def __init__(self):
+        super(PointSIFT_Seg, self).__init__()
+
+    def forward(self, x):
+        pass
+
+    def get_loss(self):
+        pass
+
+    def init_weights(self):
         pass
 
 
 if __name__ == '__main__':
     from config.config_pointnet import config
 
-    # net = PointNet()
-    # #print(net)
-    # x = torch.Tensor(config.batch_size, config.num_point, 3)
-    # y = net(x)
-    # #print(y.size())
-    net = PointNet_plus()
-    xyz = torch.rand(config.batch_size, config.num_point, 3)
-
-    out = net(xyz)
-    # print(out.shape)
+    net = PointNet()
+    # print(net)
+    x = torch.Tensor(config.batch_size, 2048, 3)
+    y = net(x)
+    print(y.size())
+    # net = PointNet_plus()
+    # xyz = torch.rand(config.batch_size, config.num_point, 3)
+    #
+    # out = net(xyz)
+    # # print(out.shape)

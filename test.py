@@ -39,12 +39,13 @@ def farthest_point_sample(xyz, npoint):
     for i in range(S):
         centroids[:, i] = farthest
         centroid = xyz[batch_indices, farthest, :].view(B, 1, C)
-        dist = torch.sum((xyz - centroid)**2, -1)
+        dist = torch.sum((xyz - centroid) ** 2, -1)
         mask = dist < distance
         distance[mask] = dist[mask]
         farthest = torch.max(distance, -1)[1]
 
     return centroids
+
 
 def index_points(points, idx):
     """
@@ -63,6 +64,7 @@ def index_points(points, idx):
     batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
     new_points = points[batch_indices, idx, :]
     return new_points
+
 
 def ball_query(radius, nsample, xyz, new_xyz):
     """
@@ -87,6 +89,7 @@ def ball_query(radius, nsample, xyz, new_xyz):
     group_idx[mask] = group_first[mask]
     return group_idx
 
+
 # xyz = torch.rand(3, 4, 6)
 # npoint = 2
 #
@@ -94,21 +97,22 @@ def ball_query(radius, nsample, xyz, new_xyz):
 # res = farthest_point_sample(xyz, npoint)
 # print(res)
 import torch.nn as nn
-import torch.nn.functional as F
-
-# a = torch.rand(3, 4)
-# print(a)
-# print(torch.log(F.softmax(a, 1)))
-# print(F.log_softmax(a, 1))
-
-# F.nll_loss()
-input = torch.randn(3, 5, requires_grad=True)
-# each element in target has to have 0 <= value < C
-target = torch.tensor([1, 0, 4])
-output = F.nll_loss(F.log_softmax(input, dim=1), target)
-output2 = F.cross_entropy(input, target)
-print(output.detach())
-print(output2.detach())
+# print(("%03d"%4))
+# import torch.nn.functional as F
+#
+# # a = torch.rand(3, 4)
+# # print(a)
+# # print(torch.log(F.softmax(a, 1)))
+# # print(F.log_softmax(a, 1))
+#
+# # F.nll_loss()
+# input = torch.randn(3, 5, requires_grad=True)
+# # each element in target has to have 0 <= value < C
+# target = torch.tensor([1, 0, 4])
+# output = F.nll_loss(F.log_softmax(input, dim=1), target)
+# output2 = F.cross_entropy(input, target)
+# print(output.detach())
+# print(output2.detach())
 
 # print(res)
 # res = ball_query(0.2,1, xyz, res)
@@ -138,3 +142,32 @@ import torch.nn as nn
 # b = [a, a, a]
 # c = torch.cat(b, dim=1)
 # print(c.shape)
+
+# import torch.nn.functional as F
+# from tqdm import tqdm
+# from tqdm import trange
+# from time import sleep
+#
+# a = [['b'] for i in range(10)]
+#
+# with tqdm(a) as pbar:
+#     for i, s in enumerate(pbar):
+#         pbar.update(i)
+#         sleep(1)
+class A:
+    ab = 20
+    def __init__(self):
+        self.ab = A.ab+8
+
+    @classmethod
+    def b(cls):
+        print(cls.ab)
+
+    @staticmethod
+    def a():
+        print("this is a")
+
+
+A.b()
+a = A()
+print(a.ab)

@@ -17,19 +17,21 @@ class ModelNet40(Dataset):
         self.root_dir = '/unsullied/sharefs/_research_detection/GeneralDetection/ModelNet40/ModelNet40'
 
         self.train_files = self.get_files(osp.join(self.root_dir, 'train_files.txt'))
-        self.eval_files = self.get_files(osp.join(self.root_dir, 'test_files.txt'))
+        self.eval_files = self.get_files(osp.join(self.root_dir, 'train_files.txt'))
 
         self.classes = self.get_files(osp.join(self.root_dir, 'shape_names.txt'))
         self.num_classes = len(self.classes)
         self.class_to_id = dict(zip(self.classes, range(self.num_classes)))
 
-        self.num_point = 1024
-
         self.train = args.train
+
+
         if self.train:
-            self.train_data, self.train_label = self.get_data_and_label(self.train_files, self.train)
+            self.num_point = 1024
+            self.train_data, self.train_label = self.get_data_and_label(self.train_files)
         else:
-            self.eval_data, self.eval_label = self.get_data_and_label(self.eval_files, self.train)
+            self.num_point = 1024
+            self.eval_data, self.eval_label = self.get_data_and_label(self.eval_files)
 
         self.transform = transform
 
@@ -57,12 +59,12 @@ class ModelNet40(Dataset):
             files = f.readlines()
         return [f.rstrip() for f in files]
 
-    def get_data_and_label(self, files, train):
+    def get_data_and_label(self, files):
         all_data, all_label = [], []
         for fn in files:
             print('---------' + str(fn) + '---------')
             current_data, current_label = self.load_h5(osp.join(self.root_dir, fn))
-            current_data = current_data[:, 0:self.num_point, :] if train else current_data
+            current_data = current_data[:, 0:self.num_point, :]
             current_label = np.squeeze(current_label)
             all_data.append(current_data)
             all_label.append(current_label)
