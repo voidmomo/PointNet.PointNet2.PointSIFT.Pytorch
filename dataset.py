@@ -17,7 +17,7 @@ class ModelNet40(Dataset):
         self.root_dir = '/unsullied/sharefs/_research_detection/GeneralDetection/ModelNet40/ModelNet40'
 
         self.train_files = self.get_files(osp.join(self.root_dir, 'train_files.txt'))
-        self.eval_files = self.get_files(osp.join(self.root_dir, 'train_files.txt'))
+        self.eval_files = self.get_files(osp.join(self.root_dir, 'test_files.txt'))
 
         self.classes = self.get_files(osp.join(self.root_dir, 'shape_names.txt'))
         self.num_classes = len(self.classes)
@@ -36,9 +36,10 @@ class ModelNet40(Dataset):
         self.transform = transform
 
     def __getitem__(self, item):
+
         if self.train:
             train_data, train_label = self.train_data[item], self.train_label[item]
-            if self.transform:
+            if self.transform and np.random.random() > 0.5:
                 train_data = self.transform(train_data)
             return torch.from_numpy(train_data), torch.tensor(train_label, dtype=torch.long)
         else:

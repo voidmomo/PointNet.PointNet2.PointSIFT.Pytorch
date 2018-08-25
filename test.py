@@ -90,84 +90,58 @@ def ball_query(radius, nsample, xyz, new_xyz):
     return group_idx
 
 
-# xyz = torch.rand(3, 4, 6)
-# npoint = 2
-#
-# print(xyz)
-# res = farthest_point_sample(xyz, npoint)
-# print(res)
 import torch.nn as nn
-# print(("%03d"%4))
-# import torch.nn.functional as F
-#
-# # a = torch.rand(3, 4)
-# # print(a)
-# # print(torch.log(F.softmax(a, 1)))
-# # print(F.log_softmax(a, 1))
-#
-# # F.nll_loss()
-# input = torch.randn(3, 5, requires_grad=True)
-# # each element in target has to have 0 <= value < C
-# target = torch.tensor([1, 0, 4])
-# output = F.nll_loss(F.log_softmax(input, dim=1), target)
-# output2 = F.cross_entropy(input, target)
-# print(output.detach())
-# print(output2.detach())
+import time
 
-# print(res)
-# res = ball_query(0.2,1, xyz, res)
-# print(res.shape,res)
-# res = index_points(xyz, res)
-# print(res.shape, res)
-#
 
-import torch.nn as nn
-
-# net = nn.Sequential()
-# net.append(nn.Linear(25, 24))
-# x = torch.rand(25)
-# y = net(x)
-# print(y.shape)
-
-# model = nn.Sequential(
-#     nn.Conv2d(1, 20, 5),
-#     nn.ReLU(),
-#     nn.Conv2d(20, 64, 5),
-#     nn.ReLU()
-# )
-# for idx, module in enumerate(model.modules()):
-#     print(idx)
-
-# a = torch.rand(32, 512)
-# b = [a, a, a]
-# c = torch.cat(b, dim=1)
-# print(c.shape)
-
-# import torch.nn.functional as F
-# from tqdm import tqdm
-# from tqdm import trange
-# from time import sleep
-#
-# a = [['b'] for i in range(10)]
-#
-# with tqdm(a) as pbar:
-#     for i, s in enumerate(pbar):
-#         pbar.update(i)
-#         sleep(1)
-class A:
-    ab = 20
+class Net(nn.Module):
     def __init__(self):
-        self.ab = A.ab+8
+        super(Net, self).__init__()
+        self.mlp = nn.Linear(50, 10)
 
-    @classmethod
-    def b(cls):
-        print(cls.ab)
+    def forward(self, x):
+        x = self.mlp(x)
+        print("x.shape:", x.shape)
+        return x
+
+
+#
+# device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
+# net = Net()
+# net.to(device)
+# input = torch.rand(1024000, 50).cuda()
+# last = time.time()
+# output = net(input)
+# print(output)
+# print("single gpu:", time.time() - last)
+#
+# net = nn.DataParallel(net)
+# net.cuda()
+# last = time.time()
+# output = net(input)
+# print(output)
+# print("multi gpus:", time.time() - last)
+
+class A:
+
+    def __init__(self):
+        self.a = 10
 
     @staticmethod
-    def a():
-        print("this is a")
+    def call(s):
+        print('i am call {}'.format(s))
 
 
-A.b()
-a = A()
-print(a.ab)
+#
+
+# a = torch.tensor([[0.38, -0.32], [-0.45, 0.54]])
+#
+# print(a)
+# b = a.int()
+# print(b)
+# c = (a + 1).int()
+# print(c)
+# print(a * torch.tensor([2., 1.]))
+import tensorflow as tf
+
+tf.train.NewCheckpointReader()

@@ -5,6 +5,7 @@
       <module fileurl="file://$PROJECT_DIR$/.idea/PointNet.iml" filepath="$PROJECT_DIR$/.idea/PointNet.iml" />
       <module fileurl="file://$PROJECT_DIR$/../Test/.idea/Test.iml" filepath="$PROJECT_DIR$/../Test/.idea/Test.iml" />
       <module fileurl="file://$USER_HOME$/Workspace/Github/Face++/ResearchDet-master-fb8c4edd292ed19052e55e02190d5aaa4b8416ca/model/guozihao/.idea/guozihao.iml" filepath="$USER_HOME$/Workspace/Github/Face++/ResearchDet-master-fb8c4edd292ed19052e55e02190d5aaa4b8416ca/model/guozihao/.idea/guozihao.iml" />
+      <module fileurl="file://$PROJECT_DIR$/../object_detection/.idea/object_detection.iml" filepath="$PROJECT_DIR$/../object_detection/.idea/object_detection.iml" />
     </modules>
   </component>
 </project>

@@ -9,12 +9,14 @@ import numpy as np
 
 
 # ------------------------ modules ------------------------ #
-def conv_bn(inp, oup, kernel):
-    return nn.Sequential(
-        nn.Conv2d(inp, oup, kernel),
-        nn.BatchNorm2d(oup),
-        nn.ReLU()
+def conv_bn(inp, oup, kernel, stride=1, activation='relu'):
+    seq = nn.Sequential(
+        nn.Conv2d(inp, oup, kernel, stride),
+        nn.BatchNorm2d(oup)
     )
+    if activation == 'relu':
+        seq.add_module('2', nn.ReLU())
+    return seq
 
 
 def fc_bn(inp, oup):
@@ -280,7 +282,7 @@ class PointNet_SA_module_basic(nn.Module):
 
 class Pointnet_SA_module(PointNet_SA_module_basic):
     def __init__(self, npoint, radius, nsample, in_channel, mlp, group_all):
-        # in_channel have to be equal to 3+features_channels
+
         super(Pointnet_SA_module, self).__init__()
         self.npoint = npoint
         self.radius = radius
@@ -288,7 +290,7 @@ class Pointnet_SA_module(PointNet_SA_module_basic):
         self.group_all = group_all
 
         self.conv_bns = nn.Sequential()
-        in_channel += 3
+        in_channel += 3  # +3是因为points 与 xyz concat的原因
         for i, out_channel in enumerate(mlp):
             m = conv_bn(in_channel, out_channel, 1)
             self.conv_bns.add_module(str(i), m)
@@ -300,18 +302,22 @@ class Pointnet_SA_module(PointNet_SA_module_basic):
             xyz: the shape is [B, N, 3]
             points: thes shape is [B, N, D], the data include the feature infomation
         Return:
-            new_xyz: the shape is [B, N, 3]
-            new_points: the shape is [B, N, D']
+            new_xyz: the shape is [B, Np, 3]
+            new_points: the shape is [B, Np, D']
         """
 
         if self.group_all:
             new_xyz, new_points = self.sample_and_group_all(xyz, points)
         else:
             new_xyz, new_points = self.sample_and_group(self.npoint, self.radius, self.nsample, xyz, points)
-        new_points = new_points.permute(0, 3, 2, 1).contiguous()  # change size to (B, C, N, 1), adaptive to conv
+        new_points = new_points.permute(0, 3, 1, 2).contiguous()  # change size to (B, C, Np, Ns), adaptive to conv
+        # print("1:", new_points.shape)
         new_points = self.conv_bns(new_points)
-        new_points = torch.max(new_points, 2)[0]  # 取一个local region里所有sampled point特征对应位置的最大值。
-        new_points.permute(0, 2, 1).contiguous()
+        # print("2:", new_points.shape)
+        new_points = torch.max(new_points, 3)[0]  # 取一个local region里所有sampled point特征对应位置的最大值。
+
+        new_points = new_points.permute(0, 2, 1).contiguous()
+        # print(new_points.shape)
         return new_xyz, new_points
 
 
@@ -365,12 +371,184 @@ class Pointnet_SA_MSG_module(PointNet_SA_module_basic):
         return new_xyz, new_points
 
 
-class PointSIFT_res_module(nn.Module):
-    def __init__(self, radius, output_channel, merge):
-        super(PointSIFT_res_module, self).__init__()
+class PointSIFT_module_basic(nn.Module):
+    def __init__(self):
+        super(PointSIFT_module_basic, self).__init__()
+
+    def index_points(self, points, idx):
+        """
+        Description:
+            this function select the specific points from the whole points according to the idx.
+        Input:
+            points: input points data, [B, N, C]
+            idx: sample index data, [B, D1, D2, ..., Dn]
+        Return:
+            new_points:, indexed points data, [B, D1, D2, ..., Dn, C]
+        """
+        device = points.device
+        B = points.shape[0]
+        view_shape = list(idx.shape)
+        view_shape[1:] = [1] * (len(view_shape) - 1)
+        repeat_shape = list(idx.shape)
+        repeat_shape[0] = 1
+        batch_indices = torch.arange(B, dtype=torch.long).to(device).view(view_shape).repeat(repeat_shape)
+        new_points = points[batch_indices, idx, :]
+        return new_points
+
+    def pointsift_select_c(self, radius, xyz):
+        """
+        code by c/c++ logic
+        :param radius:
+        :param xyz:
+        :return:
+        """
+        Dist = lambda x, y, z: x ** 2 + y ** 2 + z ** 2
+        B, N, _ = xyz.shape
+        idx = torch.empty(B, N, 8)
+        judge_dist = radius ** 2
+        temp_dist = torch.ones(B, N, 8) * 1e10
+        for b in range(B):
+            for n in range(N):
+                idx[b, n, :] = n
+                x, y, z = xyz[b, n]
+                for p in range(N):
+                    if p == n: continue
+                    tx, ty, tz = xyz[b, p]
+                    dist = Dist(x - tx, y - ty, z - tz)
+                    if dist > judge_dist: continue
+                    _x, _y, _z = tx > x, ty > y, tz > z
+                    temp_idx = (_x * 4 + _y * 2 + _z).int()
+                    if dist < temp_dist[b, n, temp_idx]:
+                        idx[b, n, temp_idx] = p
+                        temp_dist[b, n, temp_idx] = dist
+        return idx.int()
+
+    def pointsift_select(self, radius, xyz):
+        """
+        code by python matrix logic
+        :param radius:
+        :param xyz:
+        :return: idx
+        """
+        dev = xyz.device
+        B, N, _ = xyz.shape
+        judge_dist = radius ** 2
+        idx = torch.arange(N).repeat(8, 1).permute(1, 0).contiguous().repeat(B, 1, 1).to(dev)
+        for n in range(N):
+            distance = torch.ones(B, N, 8).to(dev) * 1e10
+            distance[:, n, :] = judge_dist
+            centroid = xyz[:, n, :].view(B, 1, 3).to(dev)
+            dist = torch.sum((xyz - centroid) ** 2, -1)  # shape: (B, N)
+            subspace_idx = torch.sum((xyz - centroid + 1).int() * torch.tensor([4, 2, 1], dtype=torch.int, device=dev),
+                                     -1)
+            for i in range(8):
+                mask = (subspace_idx == i) & (dist > 1e-10) & (dist < judge_dist)  # shape: (B, N)
+                distance[..., i][mask] = dist[mask]
+                idx[:, n, i] = torch.min(distance[..., i], dim=-1)[1]
+        return idx
+
+    def pointsift_group(self, radius, xyz, points, use_xyz=True):
+
+        B, N, C = xyz.shape
+        assert C == 3
+        idx = self.pointsift_select(radius, xyz)  # B, N, 8
+
+        grouped_xyz = self.index_points(xyz, idx)  # B, N, 8, 3
+        grouped_xyz -= xyz.view(B, N, 1, 3)
+        if points is not None:
+            grouped_points = self.index_points(points, idx)
+            if use_xyz:
+                grouped_points = torch.cat([grouped_xyz, grouped_points], dim=-1)
+        else:
+            grouped_points = grouped_xyz
+        return grouped_xyz, grouped_points, idx
+
+    def pointsift_group_with_idx(self, idx, xyz, points, use_xyz=True):
+
+        B, N, C = xyz.shape
+        grouped_xyz = self.index_points(xyz, idx)  # B, N, 8, 3
+        grouped_xyz -= xyz.view(B, N, 1, 3)
+        if points is not None:
+            grouped_points = self.index_points(points, idx)
+            if use_xyz:
+                grouped_points = torch.cat([grouped_xyz, grouped_points], dim=-1)
+        else:
+            grouped_points = grouped_xyz
+        return grouped_xyz, grouped_points
+
+
+class PointSIFT_module(PointSIFT_module_basic):
+
+    def __init__(self, radius, output_channel):
+        super(PointSIFT_module, self).__init__()
+        self.radius = radius
+        self.conv1 = nn.Sequential(
+            conv_bn(3, output_channel, [1, 2], [1, 2]),
+            conv_bn(output_channel, output_channel, [1, 2], [1, 2]),
+            conv_bn(output_channel, output_channel, [1, 2], [1, 2])
+        )
 
     def forward(self, x):
         pass
+
+
+class PointSIFT_res_module(PointSIFT_module_basic):
+
+    def __init__(self, radius, output_channel, extra_input_channel=0, merge='add', same_dim=False):
+        super(PointSIFT_res_module, self).__init__()
+        self.radius = radius
+        self.merge = merge
+        self.same_dim = same_dim
+
+        self.conv1 = nn.Sequential(
+            conv_bn(3 + extra_input_channel, output_channel, [1, 2], [1, 2]),
+            conv_bn(output_channel, output_channel, [1, 2], [1, 2]),
+            conv_bn(output_channel, output_channel, [1, 2], [1, 2])
+        )
+
+        self.conv2 = nn.Sequential(
+            conv_bn(3 + output_channel, output_channel, [1, 2], [1, 2]),
+            conv_bn(output_channel, output_channel, [1, 2], [1, 2]),
+            conv_bn(output_channel, output_channel, [1, 2], [1, 2], activation=None)
+        )
+        if same_dim:
+            self.convt = nn.Sequential(
+                nn.Conv1d(extra_input_channel, output_channel, 1),
+                nn.BatchNorm1d(output_channel),
+                nn.ReLU()
+            )
+
+    def forward(self, xyz, points):
+        _, grouped_points, idx = self.pointsift_group(self.radius, xyz, points)  # [B, N, 8, 3], [B, N, 8, 3 + C]
+
+        grouped_points = grouped_points.permute(0, 3, 1, 2).contiguous()  # B, C, N, 8
+        ##print(grouped_points.shape)
+        new_points = self.conv1(grouped_points)
+        ##print(new_points.shape)
+        new_points = new_points.squeeze(-1).permute(0, 2, 1).contiguous()
+
+        _, grouped_points = self.pointsift_group_with_idx(idx, xyz, new_points)
+        grouped_points = grouped_points.permute(0, 3, 1, 2).contiguous()
+
+        ##print(grouped_points.shape)
+        new_points = self.conv2(grouped_points)
+
+        new_points = new_points.squeeze(-1)
+
+        if points is not None:
+            points = points.permute(0, 2, 1).contiguous()
+            # print(points.shape)
+            if self.same_dim:
+                points = self.convt(points)
+            if self.merge == 'add':
+                new_points = new_points + points
+            elif self.merge == 'concat':
+                new_points = torch.cat([new_points, points], dim=1)
+
+        new_points = F.relu(new_points)
+        new_points = new_points.permute(0, 2, 1).contiguous()
+
+        return xyz, new_points
 
 
 # ------------------------ models ------------------------ #
@@ -399,7 +577,7 @@ class PointNet(nn.Module):
         self.fc2 = fc_bn(512, 256)
         self.fc3 = nn.Linear(256, self.num_classes)
 
-        # self.I = nn.Parameter(torch.tensor(np.eye(config.K), dtype=torch.float,requires_grad=False), requires_grad = False)
+        # self.I = nn.Parameter(torch.tensor(np.eye(config.K), dtype=torch.float, requires_grad=False), requires_grad=False)
 
         self.initialize_weights()
 
@@ -452,12 +630,14 @@ class PointNet(nn.Module):
         from config.config_pointnet import config
         transform = config.end_point['transform']  # BxKxK
         mat_diff = torch.matmul(transform, transform.transpose(2, 1).contiguous())
-        I = torch.tensor(np.eye(config.K), dtype=torch.float, requires_grad=False)
+
+        I = mat_diff.new_tensor(torch.eye(config.K))
         mat_diff.sub_(I)
+
         mat_diff_loss = torch.sum(mat_diff ** 2) / 2
 
         reg_weight = 0.001
-        return loss + mat_diff_loss * reg_weight
+        return loss.to(mat_diff_loss.device) + mat_diff_loss * reg_weight
 
     def initialize_weights(self):
         for m in self.modules():
@@ -498,18 +678,18 @@ class PointNet_plus(nn.Module):
         self.dp2 = nn.Dropout(0.4)
         self.fc3 = nn.Linear(256, self.num_classes)
 
-    def forward(self, xyz):
+    def forward(self, xyz, points=None):
         """
         Input:
             xyz: is the raw point cloud(B * N * 3)
         Return:
         """
         B = xyz.size()[0]
-        # print('xyz:', xyz.shape)
-        l1_xyz, l1_points = self.pointnet_sa_msg_m1(xyz, None)
-        # print('l1_xyz:{}, l1_points:{}'.format(l1_xyz.shape, l1_points.shape))
+        # #print('xyz:', xyz.shape)
+        l1_xyz, l1_points = self.pointnet_sa_msg_m1(xyz, points)
+        # #print('l1_xyz:{}, l1_points:{}'.format(l1_xyz.shape, l1_points.shape))
         l2_xyz, l2_points = self.pointnet_sa_msg_m2(l1_xyz, l1_points)
-        # print('l2_xyz:{}, l2_points:{}'.format(l2_xyz.shape, l2_points.shape))
+        # #print('l2_xyz:{}, l2_points:{}'.format(l2_xyz.shape, l2_points.shape))
         l3_xyz, l3_points = self.pointnet_sa_m3(l2_xyz, l2_points)
         # print('l3_xyz:{}, l3_points:{}'.format(l3_xyz.shape, l3_points.shape))
         x = l3_points.view(B, 1024)
@@ -557,16 +737,26 @@ class PointSIFT(nn.Module):
         self.num_point = config.num_point
         self.num_classes = config.num_classes
 
-        self.pointsift_res_m1 = PointSIFT_res_module()
-        self.pointnet_sa_m1 = Pointnet_SA_module()
+        self.pointsift_res_m1 = PointSIFT_res_module(radius=0.1, output_channel=64, merge='concat')
+        self.pointnet_sa_m1 = Pointnet_SA_module(npoint=1024, radius=0.1, nsample=32, in_channel=64, mlp=[64, 128],
+                                                 group_all=False)
 
-        self.pointsift_res_m2 = PointSIFT_res_module()
-        self.pointnet_sa_m2 = Pointnet_SA_module()
+        self.pointsift_res_m2 = PointSIFT_res_module(radius=0.25, output_channel=128, extra_input_channel=128)
+        self.pointnet_sa_m2 = Pointnet_SA_module(npoint=256, radius=0.2, nsample=32, in_channel=128, mlp=[128, 256],
+                                                 group_all=False)
 
-        self.pointsift_res_m3_1 = PointSIFT_res_module()
-        self.pointsift_res_m3_2 = PointSIFT_res_module()
+        self.pointsift_res_m3_1 = PointSIFT_res_module(radius=0.5, output_channel=256, extra_input_channel=256)
+        self.pointsift_res_m3_2 = PointSIFT_res_module(radius=0.5, output_channel=512, extra_input_channel=256,
+                                                       same_dim=True)
 
-        self.pointnet_sa_m3 = Pointnet_SA_module()
+        self.pointnet_sa_m3 = Pointnet_SA_module(npoint=64, radius=0.4, nsample=32, in_channel=512, mlp=[512, 1024],
+                                                 group_all=True)
+
+        self.convt = nn.Sequential(
+            nn.Conv1d(512 + 256, 512, 1),
+            nn.BatchNorm1d(512),
+            nn.ReLU()
+        )
 
         # fully conntected network
         self.fc1 = fc_bn(1024, 512)
@@ -575,22 +765,45 @@ class PointSIFT(nn.Module):
         self.dp2 = nn.Dropout(0.4)
         self.fc3 = nn.Linear(256, self.num_classes)
 
-    def forward(self, xyz):
+    def forward(self, xyz, points=None):
         """
         Input:
             xyz: is the raw point cloud(B * N * 3)
         Return:
         """
         B = xyz.size()[0]
-        # print('xyz:', xyz.shape)
-        # ---- c0 ---- #
-        l1_xyz, l1_points = self.pointnet_sa_m1(xyz, None)
+        # #print('xyz:', xyz.shape)
+
+        # ---- c1 ---- #
+        l1_xyz, l1_points = self.pointsift_res_m1(xyz, points)
         # print('l1_xyz:{}, l1_points:{}'.format(l1_xyz.shape, l1_points.shape))
-        l2_xyz, l2_points = self.pointnet_sa_msg_m2(l1_xyz, l1_points)
+        c1_xyz, c1_points = self.pointnet_sa_m1(l1_xyz, l1_points)
+        # print('c1_xyz:{}, c1_points:{}'.format(c1_xyz.shape, c1_points.shape))
+
+        # ---- c2 ---- #
+        l2_xyz, l2_points = self.pointsift_res_m2(c1_xyz, c1_points)
         # print('l2_xyz:{}, l2_points:{}'.format(l2_xyz.shape, l2_points.shape))
-        l3_xyz, l3_points = self.pointnet_sa_m3(l2_xyz, l2_points)
+        c2_xyz, c2_points = self.pointnet_sa_m2(l2_xyz, l2_points)
+        # print('c2_xyz:{}, c2_points:{}'.format(c2_xyz.shape, c2_points.shape))
+
+        # ---- c3 ---- #
+        l3_1_xyz, l3_1_points = self.pointsift_res_m3_1(c2_xyz, c2_points)
+        # print('l3_1_xyz:{}, l3_1_points:{}'.format(l3_1_xyz.shape, l3_1_points.shape))
+        l3_2_xyz, l3_2_points = self.pointsift_res_m3_2(l3_1_xyz, l3_1_points)
+        # print('l3_2_xyz:{}, l3_2_points:{}'.format(l3_2_xyz.shape, l3_2_points.shape))
+
+        l3_points = torch.cat([l3_1_points, l3_2_points], dim=-1)
+        l3_points = l3_points.permute(0, 2, 1).contiguous()
+        l3_points = self.convt(l3_points)
+        l3_points = l3_points.permute(0, 2, 1).contiguous()
+        l3_xyz = l3_2_xyz
         # print('l3_xyz:{}, l3_points:{}'.format(l3_xyz.shape, l3_points.shape))
-        x = l3_points.view(B, 1024)
+
+        # ---- c4 ---- #
+        c4_xyz, c4_points = self.pointnet_sa_m3(l3_xyz, l3_points)
+        # print(c4_points.shape)
+
+        x = c4_points.view(B, 1024)
         x = self.fc1(x)
         x = self.dp1(x)
         x = self.fc2(x)
@@ -598,11 +811,26 @@ class PointSIFT(nn.Module):
         x = self.fc3(x)
         return x
 
-    def get_loss(self):
-        pass
+    @staticmethod
+    def get_loss(input, target):
+        classify_loss = nn.CrossEntropyLoss()
+        loss = classify_loss(input, target)
+        return loss
 
-    def init_weights(self):
-        pass
+    def initialize_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                n = m.kernel_size[0] * m.kernel_size[1] * m.out_channels
+                m.weight.data.normal_(0, math.sqrt(2. / n))
+                if m.bias is not None:
+                    m.bias.data.zero_()
+            elif isinstance(m, nn.BatchNorm2d):
+                m.weight.data.fill_(1)
+                m.bias.data.zero_()
+            elif isinstance(m, nn.Linear):
+                # n = m.weight.size(1)
+                m.weight.data.normal_(0, 0.01)
+                m.bias.data.zero_()
 
 
 class PointSIFT_Seg(nn.Module):
@@ -620,15 +848,19 @@ class PointSIFT_Seg(nn.Module):
 
 
 if __name__ == '__main__':
-    from config.config_pointnet import config
-
-    net = PointNet()
-    # print(net)
-    x = torch.Tensor(config.batch_size, 2048, 3)
-    y = net(x)
-    print(y.size())
+    # from config.config_pointnet import config
+    #
+    # net = PointNet()
+    # # #print(net)
+    # x = torch.Tensor(config.batch_size, 2048, 3)
+    # y = net(x)
+    # #print(y.size())
     # net = PointNet_plus()
     # xyz = torch.rand(config.batch_size, config.num_point, 3)
     #
     # out = net(xyz)
-    # # print(out.shape)
+    # # #print(out.shape)
+
+    m = PointSIFT()
+    xyz = torch.rand(5, 1048, 3)
+    out = m(xyz, None)

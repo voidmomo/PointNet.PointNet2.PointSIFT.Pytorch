@@ -54,6 +54,19 @@ def choose_model(args, dataset):
 
         from network import PointNet_plus
         return PointNet_plus(), config, PointNet_plus
+    elif args.model == 'pointsift':
+        from config.config_pointsift import config
+
+        config.num_classes = dataset.num_classes
+        config.num_point = dataset.num_point
+        config.classes = dataset.classes
+        config.totality = len(dataset)
+
+        if torch.cuda.device_count() > 1:
+            config.batch_size *= torch.cuda.device_count()
+
+        from network import PointSIFT
+        return PointSIFT(), config, PointSIFT
     else:
         raise Exception("The choosed model doesn't exist!")
         exit()
@@ -77,7 +90,7 @@ def start(args):
     if args.cuda and torch.cuda.is_available():
         model.cuda()
 
-    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=True, num_workers=4)
+    dataloader = DataLoader(dataset, batch_size=config.batch_size, shuffle=False, num_workers=4)
     optimizer = optim.Adam(model.parameters(), lr=config.learning_rate)
 
     utils.check_filepath(args.save_path, args.clean)
@@ -86,9 +99,9 @@ def start(args):
     last_epoch = 1
 
     if len(saved_models) > 0:
-        saved_epochs = [int(model.rstrip('.pth')[-1]) for model in saved_models]
-        last_epoch = str(max(saved_epochs))
-        saved_model = os.path.join(args.save_path, 'cls_model_{}.pth'.format(last_epoch))
+        saved_epochs = [int(model.rstrip('.pth').split('_')[-1]) for model in saved_models]
+        last_epoch = max(saved_epochs)
+        saved_model = os.path.join(args.save_path, 'cls_model_{}.pth'.format(str(last_epoch)))
         print("load weight: {}".format(saved_model))
         model.load_state_dict(torch.load(saved_model))
 
@@ -104,7 +117,7 @@ def start(args):
                 point_cloud, label = point_cloud.cuda(), label.cuda()
             optimizer.zero_grad()
             pred = model(point_cloud)
-            train_loss = Net.get_loss(pred, label)
+            train_loss = Net.get_loss(pred, label)  # because the dataparallel
             train_loss.backward()
             optimizer.step()
             lr_exponential_decay(optimizer, epoch * (config.totality / config.batch_size) + i, config.decay_rate,

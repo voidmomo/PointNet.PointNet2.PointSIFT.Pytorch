@@ -7,7 +7,7 @@ import os.path as osp
 class Config:
     # -------------------- data config --------------------#
 
-    num_classes = 0
+    num_classes = 40
     classes = []
     totality = 0
     num_point = 0

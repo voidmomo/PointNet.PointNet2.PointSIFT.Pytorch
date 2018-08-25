@@ -6,5 +6,6 @@
     <orderEntry type="sourceFolder" forTests="false" />
     <orderEntry type="module" module-name="guozihao" />
     <orderEntry type="module" module-name="Test" />
+    <orderEntry type="module" module-name="object_detection" />
   </component>
 </module>

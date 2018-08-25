@@ -10,13 +10,13 @@ base_path = os.path.dirname(os.path.abspath(__file__))
 
 
 def build():
-    headers = [h for h in glob.glob('cinclude/*_wrapper.h')]
-    sources = [s for s in glob.glob('csrc/*.c')]
+    headers = [h for h in glob.glob('cinclude/pointsift.h')]
+    sources = [s for s in glob.glob('csrc/pintsift.c')]
     defines = []
     with_cuda = False
 
     if torch.cuda.is_available():
-        sources += [s for s in glob.glob(('csrc/*.cu'))]
+        sources += [s for s in glob.glob(('csrc/pointsift.cu'))]
         defines += [('WITH_CUDA', None)]
         with_cuda = True
 
